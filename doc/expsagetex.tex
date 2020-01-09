@@ -1,0 +1,548 @@
+\documentclass{article}
+\usepackage{expsagetex}
+\usepackage{amsmath}
+\usepackage{parskip}
+\usepackage{shortvrb}
+\usepackage{csquotes}
+\usepackage{expl3}
+\usepackage[svgnames]{xcolor}
+\usepackage{tikz}
+\usepackage{xfp}
+\usepackage{siunitx}
+\sisetup{group-separator = \text{\,}}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, anchorcolor=Lime, linkcolor=RoyalBlue,
+            urlcolor=Crimson}
+
+\title{%
+  \pkg{expsagetex} -- a fully expandable interface for SageTeX%
+  \thanks{This file describes \pkg{expsagetex}~v0.1, last revised 2020-01-11.}%
+}
+\author{%
+  Florent Rougon%
+  \thanks{%
+    E-mail: \href{mailto:f.rougon@free.fr}{mailto:f.rougon@free.fr}%
+  }%
+}
+
+\newcommand*{\pkg}{\textsf}
+\newcommand*{\meta}[1]{$\langle \textsl{#1} \rangle$}
+\newcommand*{\tikzname}{Ti\emph{k}Z}
+
+\setlength{\parindent}{0pt}     % will probably look better here
+
+\begin{document}
+
+\maketitle
+\begin{abstract}
+  This package is based on \texttt{sagetex.sty}, the style file for SageTeX.
+  One deficiency of current \texttt{sagetex.sty} (version~3.3 from 2019/01/09)
+  is that it doesn't provide any user-accessible way to retrieve a result
+  computed by Sage in places where only expansion happens. This packages uses
+  the low-level SageTeX machinery to implement a set of commands that can
+  \enquote{record} results computed by Sage and a fully expandable command
+  that can yield any such result wherever you need it, even in expansion-only
+  contexts.
+\end{abstract}
+
+\MakeShortVerb{\|}
+
+\tableofcontents
+\clearpage
+
+Besides the \nameref{sec:quick-start} section below, there is introductory
+material to \pkg{expsagetex}
+\href{https://tex.stackexchange.com/questions/521319/sagetex-1000sep-for-sage-calculated-number-siunitx/521389#521389}{on
+  TeX.stackexchange.com}.
+
+\section{Quick start}
+\label{sec:quick-start}
+
+Getting a result from Sage using \pkg{expsagetex} involves three steps in the
+\LaTeX\ code:
+\begin{enumerate}
+\item Recording a Python expression to be written to the
+  \texttt{.sagetex.sage} file. This step is done with one of the |\est*Record|
+  functions.
+\item Using the result where you need it. This is done with |\estGet| and
+  works in many places, in particular in expansion-only contexts (inside
+  |\edef|, |\message|, |\write|, etc.).
+\item Declaring that you use the result, so that a warning can be displayed if
+  the result isn't available yet (|\estGet| can't print the warning itself
+  because it must work in expansion-only contexts). This is done with
+  |\estRefUsed|.
+\end{enumerate}
+
+Step~3 can be done before or after step~2, but must come after step~1. When
+you run |sage| on the \texttt{.sagetex.sage} file written by step~1, the
+Python expression is evaluated, converted to a Python string and written to
+the |.sagetex.sout| file. This file is in turn read by \texttt{sagetex.sty} at
+startup, which makes the result available for |\estGet|.
+
+Thus, a very simple example can be
+\estRecordFormatted{\littleFermatExple}{(45**6) \percent 7}%
+\estRefUsed{\littleFermatExple}%
+$45^6 \equiv \estGet{\littleFermatExple} \pmod 7$. This was obtained with:
+\begin{verbatim}
+\estRecordFormatted{\littleFermatExple}{(45**6) \percent 7}%
+\estRefUsed{\littleFermatExple}%
+$45^6 \equiv \estGet{\littleFermatExple} \pmod 7$
+\end{verbatim}
+
+For compiling, use the same method as with \pkg{sagetex} (which
+\pkg{expsagetex} relies on): you need one \LaTeX\ run, one |sage| run on the
+\texttt{.sagetex.sage} file followed by at least one more \LaTeX\ run (if more
+are needed, warnings are printed by \LaTeX\ as usual).
+
+\section{Examples}
+
+\subsection{Integers}
+
+\subsubsection{Local assignments}
+
+When using |\estRecordFormatted{|\meta{macro}|}{|\meta{expr}|}| with a Python
+expression \meta{expr} that evaluates to an integer,
+|\estGet[|\meta{fallback}|]{|\meta{macro}|}| should give (i.e., expand to) the
+expected result. This is because calling |str()| on a Python integer doesn't
+use any exponent notation, thus |latex()| should not add any formatting. Let's
+execute the following Python statement using the |sageblock| environment:
+
+\begin{sageblock}
+x = 2**333
+\end{sageblock}
+
+Now, record the value of $x$ and associate it with macro |\mymacro|. This
+makes |\mymacro| a kind of reference to the saved value, but to retrieve the
+tokens associated to this reference, you have to use |\estGet| instead of
+|\ref| (this can be done in an expansion-only context like inside |\edef|,
+which is impossible with |\ref|). See section~\ref{sec:technical-details}
+below for more details on this.
+{%
+  \estRecordFormatted{\mymacro}{x}%
+  Recover the saved value and format it with the |\num| macro of
+  \pkg{siunitx}:\\
+  \num{\estGet[-1]{\mymacro}}.%
+  \estRefUsed{\mymacro}\\
+  This was achieved with the following calls:
+\begin{verbatim}
+\estRecordFormatted{\mymacro}{x}
+\num{\estGet[-1]{\mymacro}}
+\estRefUsed{\mymacro}
+\end{verbatim}
+}%
+\ifx\mymacro\undefined\else
+  \par Bug: |\mymacro| should be undefined here!
+\fi
+
+Another way to do the same without having Sage call |latex()| at all is to
+use |\estRecordStr| to record a string representation of the integer we are
+interested in:
+\begin{verbatim}
+\estRecordStr{\mymacro}{str(x)}
+\num{\estGet[-1]{\mymacro}}
+\estRefUsed{\mymacro}
+\end{verbatim}
+
+\pagebreak[3]
+
+Notes:
+\begin{itemize}
+\item |\estGet| wraps its return value within |\unexpanded| (|\exp_not:n|),
+  which implies that it won't expand further when used in |\edef| or an
+  \pkg{expl3} |x|-type argument.
+\item In order to use the result of evaluating a Python expression in the
+  \LaTeX\ document, it is not necessary to store it in a Python variable.
+  Example:%
+  \estRecordFormatted{\twoToTheThenth}{2**10}%
+  \estRefUsed{\twoToTheThenth}%
+  \[ 2^{10} = \estGet{\twoToTheThenth} \]
+\end{itemize}
+
+Another example with variables:
+
+\begin{sageblock}
+x = 23 % 8         # That is, x = 7.
+y = 2*x
+\end{sageblock}
+
+Save the value of $1000000\times (y-10)$ (as computed by Sage) and associate
+it with macro |\numberBasedOnY|.
+\estRecordFormatted{\numberBasedOnY}{1000000*(y-10)}%
+% Use the value -1000000 when Sage hasn't written the result to the .sout file
+% yet.
+\[ 1000000\times (y - 10) = \num{\estGet[-1000000]{\numberBasedOnY}} \]
+\estRefUsed{\numberBasedOnY}
+
+\subsubsection{Global assignments}
+
+While |\estRecordFormatted| assigns locally to the macro given by its
+first argument, all |\est*Record| functions have a global variant that
+performs a global assignment instead. The global variant of
+|\estRecordFormatted| is |\estGRecordFormatted|, that of
+|\estRecordStr| is |\estGRecordStr|, that of
+|\estARecordFormatted| is |\estGARecordFormatted|, etc. Example:
+
+\begin{sageblock}
+x = 3+4
+\end{sageblock}
+
+Save the value of $x$ and globally assign macro |\Iamseven| to allow us
+to retrieve the saved value.
+{%
+  \estGRecordFormatted{\Iamseven}{x}%
+}%
+Get it back from outside the group where this was done, and format it with
+|\num|: the result is
+\num{\estGet[-2]{\Iamseven}}.%
+\estRefUsed{\Iamseven}
+
+\subsection{Floating point numbers}
+
+|\estRecordFormatted| works with floating point numbers, but it uses \LaTeX\
+markup if the string representation of the result (in Python) uses exponent
+notation. When this is not desirable---i.e., when you just want a numerical
+result without any formatting---use |\estRecordFloat| or one of its variants.
+Example:
+\begin{sageblock}
+x = 3.1415927
+\end{sageblock}
+\estRecordFloat{\PiRoundedByPython}{x}{.2f}%
+\estRefUsed{\PiRoundedByPython}%
+$x$ rounded to two decimal places is \estGet[0]{\PiRoundedByPython}. This was
+rounded by Python.
+\estRecordFloat{\PiRoundedBySiunitx}{x}{.10f}%
+\estRefUsed{\PiRoundedBySiunitx}%
+Thanks to the expandable nature of |\estGet|, one can also do this: $x$
+rounded to four decimal places is
+\num[round-mode=places, round-precision=4]{\estGet[0]{\PiRoundedBySiunitx}}.
+This was rounded by \pkg{siunitx}.
+
+Of course, one can also compute a float with Sage without storing it into a
+Python variable. Here is an approximation of $\pi$ using an expression based
+on Machin's formula and the power series expansion of $\arctan$:
+\estRecordFloat{\PiViaMachinAndPowerSeries}
+  {
+    N(4*sum([ (-1)**n / (2*n+1) * (4*(1/5)**(2*n+1) - (1/239)**(2*n+1))
+              for n in range(10) ]))
+  }{.6f}%
+\estRefUsed{\PiViaMachinAndPowerSeries}%
+\begin{align*}
+  \pi &= 4\sum_{n=0}^{+\infty} \frac{(-1)^n}{(2n+1)}
+         \Biggl( 4 \, {\Bigl( \frac{1}{5} \Bigr)}^{2n+1} \! -
+                 {\Bigl( \frac{1}{239} \Bigr)}^{2n+1} \Biggr)\\
+      &\approx \estGet[0]{\PiViaMachinAndPowerSeries}
+\end{align*}
+
+\subsection{Strings}
+
+Functions working on Python strings are the most general here. For instance,
+|\estRecordFormatted| first evaluates |latex(...)| in Sage (Python), where
+|...| is the Python expression you entered; this results in a string with
+\LaTeX\ math-mode formatting commands (e.g., if evaluating |str(...)| in Python string yields something containing brackets or
+exponents); then this string is written to the |.sout| file inside an
+argument of |\newlabel|, which \pkg{sagetex} reads at startup. Similarly,
+|\estRecordFloat| causes Python to convert a float to a string using the
+user-specified format, then this string is written to the |.sout| file
+inside an argument of |\newlabel|, just as with
+|\estRecordFormatted|. This applies to global and array variants of the
+\pkg{expsagetex} functions as well.
+
+So, |\estRecordStr| and its variants can be very useful in case your
+Python code returns a data type that isn't handled in a satisfactory way by
+functions belonging to the families of |\estRecordFormatted| or
+|\estRecordFloat|. All you have to do is to make your Python code format
+your data as a string with a syntax that is convenient for the \LaTeX\
+document; you record this string with |\estRecordStr| or one of its
+variants, use |\estGet| and |\estRefUsed| as usual and voilà, your new data
+type is nicely handled by \pkg{expsagetex}. We'll see an example of this
+approach in
+section~\ref{sec:plotting-with-tikzname-based-on-Sage-computations}, where
+Python code generates a large amount of $(x_i, y_i)$ coordinates from two
+lists of floats $[x_1, \dotsc, x_n]$ and $[y_1, \dotsc, y_n]$. The Python code
+formats the list of $(x_i, y_i)$ coordinates in a form that is suitable for
+the \tikzname\ \texttt{plot coordinates} operation, which allows one to plot
+the data right away.
+
+Here is a very simple example with |\estRecordStr| used to record a Sage
+(Python) string:
+\begin{sageblock}
+ some_string = "abc  def"
+\end{sageblock}
+\estRecordStr{\somestring}{some_string}%
+X\estGet{\somestring}Y%
+\estRefUsed{\somestring}
+
+The two spaces between |abc| and |def| are present in the
+|.sout| file, but get coalesced into a single space token when
+|\newlabel| tokenizes its second argument. If this is not desired, the
+easiest way is probably to use another character instead of space (e.g.,
+\verb|~|).
+
+\subsection{Using array data}
+\label{sec:using-array-data}
+
+\pkg{expsagetex} offers variants of |\estRecordFormatted|,
+|\estGRecordFormatted|, |\estRecordFloat|, |\estGRecordFloat|, |\estRecordStr|
+and |\estGRecordStr| that allow one to easily use an index inside the macro
+name given for the recording operation. These variants all have the letter
+\texttt{A} (standing for ``array'') right before \texttt{Record}.
+
+Where the non-array versions of the |\est*Record*| commands take one argument
+specifying the destination macro name, the array versions accept two arguments
+\meta{base} and \meta{index} and determine the destination macro name as the
+result of expanding |\csname |\meta{base}@\meta{index}|\endcsname|. As a
+consequence, the \meta{base} and \meta{index} arguments are recursively
+expanded, which can be used to dynamically compute a numeric index using for
+instance |\numexpr|, or whatever you want.
+
+Here is an example that uses Python to evaluate the elements of a Vandermonde
+matrix:
+\ExplSyntaxOn
+\int_new:N \l__my_row_int
+\int_new:N \l__my_col_int
+\int_new:N \g__my_row_counter_int
+\clist_const:Nn \c__my_clist { 2, sqrt(2)/2, 2/7, 4/3, 1/5 }
+\clist_const:Nn \c__my_formatted_clist
+  { 2, \frac{\sqrt{2}}{2}, \frac{2}{7}, \frac{4}{3}, \frac{1}{5} }
+\seq_new:N \l__my_matrix_rows_seq
+
+\int_step_variable:nnNn { 1 } { 5 } \l__my_row_int
+  {
+    % One l3seq per matrix row
+    \seq_clear_new:c { l__my_matrix_row \l__my_row_int _seq }
+    % \use:c needs two expansion steps to do its work
+    \exp_args:NNo \seq_put_right:No \l__my_matrix_rows_seq
+      { \use:c { l__my_matrix_row \l__my_row_int _seq } }
+
+    \int_step_variable:nnNn { 1 } { 5 } \l__my_col_int
+      {
+        \tl_set:Nx \l_tmpa_tl
+          {
+            ( \clist_item:Nn \c__my_clist { \l__my_row_int } ) **
+                                                          ( \l__my_col_int - 1 )
+          }
+        \estARecordFormatted { Vandermonde } { \l__my_row_int - \l__my_col_int }
+          { \tl_use:N \l_tmpa_tl }
+        \seq_put_right:cx { l__my_matrix_row \l__my_row_int _seq }
+          { \estAGet [0] { Vandermonde } { \l__my_row_int - \l__my_col_int } }
+        \estARefUsed { Vandermonde } { \l__my_row_int - \l__my_col_int }
+      }
+  }
+
+\[ \renewcommand{\arraystretch}{1.2}
+  \mathcal{V} \Bigl( \clist_use:Nn \c__my_formatted_clist { , } \Bigr) =
+   \begin{bmatrix}
+     \int_gzero:N \g__my_row_counter_int
+     \seq_map_inline:Nn \l__my_matrix_rows_seq
+       {
+         \int_gincr:N \g__my_row_counter_int
+         \seq_use:Nn #1 { & }
+         % Append \\ unless it is the last line
+         \int_compare:nNnT
+           { \g__my_row_counter_int } < { \seq_count:N \l__my_matrix_rows_seq }
+           { \\ }
+       }
+   \end{bmatrix} \]
+\ExplSyntaxOff
+
+This technique can be used to plot curves with \tikzname\ based on coordinates
+computed by Python, but this is rather wasteful. We'll see a better method
+in section~\ref{sec:plotting-with-tikzname-based-on-Sage-computations}.
+
+\subsection{Displaying lists}
+\label{sec:lists}
+
+|\estRecordFormatted| is fine for a list of integers:%
+\estRecordFormatted{\listA}{list(range(2, 21, 3))}%
+\begin{quote}
+  \estRefUsed{\listA}%
+  $\estGet[{[]}]{\listA}$
+\end{quote}
+
+It may do what you want for floats too:
+\estRecordFormatted{\listB}{map(float, list(range(2, 21, 3)))}%
+\begin{quote}
+  \estRefUsed{\listB}%
+  $\estGet[{[]}]{\listB}$
+\end{quote}
+
+But beware: if you use |\estRecordFormatted|, floats are formatted by Sage's
+|latex()| function:
+\estRecordFormatted{\listC}{[1e-10] + [5.0, 3e-14]}
+\begin{quote}
+  \small
+  \estRefUsed{\listC}%
+  $\estGet[{[]}]{\listC}$
+\end{quote}
+
+Here is a way to use a Python list of floats formatted with no exponent
+and using a chosen number of decimal places:%
+% We format each float individually as a string. We could as well omit the
+% outer brackets: they are just string characters here (the final assembled
+% expression is a Python string; it is *not* evaluated as a list by Python).
+\estRecordStr{\listD}
+  {
+    '[' +
+    ', '.join(map(lambda x: "\percent.14f" \percent (x,), [1e-10, 5.0, 3e-14])) +
+    ']'
+  }
+\begin{quote}
+  \estRefUsed{\listD}%
+  $\estGet[{[]}]{\listD}$
+\end{quote}
+
+\subsection{Plotting with \tikzname\ based on Sage computations}
+\label{sec:plotting-with-tikzname-based-on-Sage-computations}
+
+Plotting functions based on coordinates computed by Sage can be done using
+array-style functions of \pkg{expsagetex} (see
+section~\ref{sec:using-array-data}), however such an approach is vastly
+inefficient if the plot uses a significant number of points. A better approach
+is to prepare one string on the Python side containing all needed coordinates
+in a format that the \LaTeX\ plotting code can easily handle. This way, only
+one reference---as in |\label| and |\ref|---is used to pass data for the whole
+plot. As an example, here is a part of the Euler spiral where all coordinates
+are computed by Sage and transferred in one go to the \LaTeX\ side (for the
+full Euler Spiral, you need to make $t$ vary from $-\infty$ to $+\infty$).
+%
+\begin{sagesilent}
+  x = var('x')
+  start = -5*pi/2
+  end = 5*pi/2
+  nb_samples = 2000
+  delta = float(end-start)/(nb_samples-1)
+\end{sagesilent}
+%
+\estRecordStr{\computedCoordsRef}
+  {
+    " ".join([ "(\percent.6f, \percent.6f)" \percent
+               (0.1*( numerical_integral(cos(x**2), 0, t)[0] ),
+                0.1*( numerical_integral(sin(x**2), 0, t)[0] ))
+               for t in ( start + _*delta for _ in range(nb_samples) ) ])
+  }
+\edef\computedCoords{\estGet[(0,0)]{\computedCoordsRef}}
+\estRefUsed{\computedCoordsRef}
+%
+\begin{center}
+\begin{tabular}{cc}
+\raisebox{-0.5\height}{%
+  \begin{tikzpicture}
+    \draw[red!60!black, scale=20] plot coordinates { \computedCoords };
+  \end{tikzpicture}%
+}\hspace*{0.06\linewidth} &
+\hspace*{0.06\linewidth}%
+$ \newcommand{\diff}{\mathop{}\!\mathrm{d}}
+  \left\{
+    \begin{array}{>{\displaystyle}l}
+      x(t) = \int_{0}^{t} \cos s^2 \diff s\\[10pt]
+      y(t) = \int_{0}^{t} \sin s^2 \diff s
+    \end{array}
+  \right. ,\ t \in [-\frac{5\pi}{2}, \frac{5\pi}{2}]$
+\end{tabular}
+\end{center}
+
+\section{Expandable commands work everywhere!}
+
+Since |\estGet| is expandable and we have |\usepackage{xfp}| in the preamble,
+we can do:
+\begin{verbatim}
+$\fpeval{3*\estGet[-1]{\Iamseven}}$
+\end{verbatim}
+This expands to $\fpeval{3*\estGet[-1]{\Iamseven}}$, since |\Iamseven|
+contains the last value of $x$ computed by Sage, which is $7$ (if Sage hasn't
+been run yet, it expands to $-3$ due to the fallback value \texttt{-1}
+specified in the optional argument of |\estGet|).%
+\estRefUsed{\Iamseven}%
+
+{%
+  Given that \TeX\ expands the right-hand side of integer, dimen and glue
+  assignments until this yields the proper syntactic element, one can also use
+  |\estGet| like this:
+  \begin{verbatim}
+  \count2=4
+  \multiply \count2 by \estGet[-1]{\Iamseven}
+  \the\count2
+  \estRefUsed{\Iamseven}% just to be clean
+  \end{verbatim}
+  \count2=4
+  \multiply \count2 by \estGet[-1]{\Iamseven}
+  $\rightarrow$ \the\count2 % prints 28 (4*7)
+  \estRefUsed{\Iamseven}
+}
+
+\bigskip
+Same thing with a |\dimen| register:
+\begin{verbatim}
+\dimen0=1pt
+\dimen0=\estGet[-1]{\Iamseven}\dimen0
+\the\dimen0
+\estRefUsed{\Iamseven}% just to be clean
+\end{verbatim}
+\dimen0=1pt
+\dimen0=\estGet[-1]{\Iamseven}\dimen0
+$\rightarrow$ \the\dimen0 % prints 7.0pt
+\estRefUsed{\Iamseven}
+
+\newcommand*{\grammarsymbol}[1]{\mbox{\meta{#1}}}%
+And since \LaTeX\ lengths are |\skipdef| tokens and |\setlength| is
+basically a glue assignment, one can have fun with
+|\estGet[-1]{\Iamseven}| expanding to the \grammarsymbol{factor} of
+a \grammarsymbol{normal dimen} (cf.~\TeX book p.~270):
+\begin{verbatim}
+\dimen0=2pt
+\dimen2=3pt
+\newlength{\mylength}
+\setlength{\mylength}{%
+       \estGet[-1]{\Iamseven}\dimen0
+  plus \estGet[-1]{\Iamseven}\dimen2}%
+\the\mylength
+\estRefUsed{\Iamseven}% just to be clean
+\end{verbatim}
+\dimen0=2pt
+\dimen2=3pt
+\newlength{\mylength}
+\setlength{\mylength}{%
+       \estGet[-1]{\Iamseven}\dimen0
+  plus \estGet[-1]{\Iamseven}\dimen2}%
+$\rightarrow$ \the\mylength % prints 14.0pt plus 21.0pt
+\estRefUsed{\Iamseven}
+
+\section{Troubleshooting}
+
+In case something goes wrong when using \pkg{sagetex} or \pkg{expsagetex}, you
+may get stuck and unable to perform a full \LaTeX\ run. This can for instance
+happen if one of your Python expressions is invalid. This kind of error is
+similar to problems that may occur when something ``bad'' was written to the
+|.aux| file. The cure is similar too: locate the error (inspecting the
+\texttt{.sagetex.sage} and \texttt{.sagetex.sout} files can help; if the
+problem is an invalid Python expression, the |sage| run will tell you),
+regenerate the files containing invalid things after fixing their source, then
+rerun the \LaTeX\ and |sage| commands as usual. Typically, you'll fix a Python
+expression in your |.tex| file, remove the |.sagetex.sout| file and rerun
+\LaTeX, |sage| and again \LaTeX. If you want to be \emph{really} sure to
+restart from a clean state, remove the \texttt{.sagetex.sage},
+\texttt{.sagetex.sout} and |.aux| files before redoing the \LaTeX\ \& |sage|
+dance.
+
+\section{Technical details}
+\label{sec:technical-details}
+
+Some comments about what a call such as |\estRecordStr{\mymacro}{|$s$|}| as
+seen below really does ($s$ must evaluate in Python to a string). Informally,
+one might be tempted to say that this saves the value of $s$ in the specified
+macro, but that would be rather inaccurate. After the call to |\estRecordStr|,
+the specified macro contains an integer which is used to form a reference
+name---a label, if you wish---through which we can get the value of $s$ using
+inner gears of the |\label| and |\ref| machinery. The \texttt{.sagetex.sout}
+file written when running Sage on the \texttt{.sagetex.sage} file contains
+|\newlabel| commands that define the associated text (tokens) for reference
+names \texttt{@sageinline0}, \texttt{@sageinline1}, etc. The trailing number
+is what is really stored by the above call to |\estRecordStr| as the
+replacement text of |\mymacro|. \texttt{sagetex.sty} reads this
+\texttt{.sagetex.sout} file at startup when it exists, which defines the
+labels from the point of view of the \LaTeX\ kernel and allows us to retrieve
+the Sage output for each recorded expression (after the |\newlabel| commands
+have been executed, the Sage outputs are available, after some simple data
+extraction, in macros |\r@@sageinline0|, |\r@@sageinline1|, etc.).
+
+\end{document}

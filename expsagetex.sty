@@ -1,0 +1,295 @@
+% expsagetex.sty --- Retrieve sagetex results in expansion-only contexts
+% -*- coding: utf-8 -*-
+%
+% Copyright (C) 2020  Florent Rougon
+%
+% This work may be distributed and/or modified under the
+% conditions of the LaTeX Project Public License, either version 1.3
+% of this license or (at your option) any later version.
+% The latest version of this license is in
+%   http://www.latex-project.org/lppl.txt
+% and version 1.3 can be found in the LICENSE file present in this
+% distribution.
+%
+% This work has the LPPL maintenance status `maintained'.
+%
+% The Current Maintainer of this work is Florent Rougon.
+%
+% This work consists of all files listed in manifest.txt.
+\NeedsTeXFormat{LaTeX2e}[1995/12/01]
+\RequirePackage{expl3}
+\RequirePackage{xparse}
+\RequirePackage{sagetex}
+\RequirePackage{refcount}
+
+\ProvidesExplPackage{expsagetex}{2020-01-11}{0.1}
+  {Fully expandable macros for retrieving results from SageTeX}
+
+% Nice trick taken from Frank Mittelbach's widows-and-orphans package
+\prg_new_conditional:Npnn \__est_legacy_switch_if:n #1 {p, T , F , TF }
+  {
+    \exp_args:Nc \if_meaning:w { if#1 } \iftrue
+      \prg_return_true:
+    \else:
+      \prg_return_false:
+    \fi:
+  }
+
+\cs_new_protected:Npn \__est_record_str_aux:NNn #1#2#3
+  {
+    \use:c { ST@wsf }
+      {
+        try:^^J
+        \space _st_.current_tex_line\space = \space \the\inputlineno^^J
+        \space _st_.inline(\the\value{ST@inline}, \space #3)^^J
+        except:^^J
+        \space _st_.goboom(\the\inputlineno)
+      }
+
+    % Save the value of the ST@inline counter to macro (or l3tl) #2
+    #1 #2 { \the\value{ST@inline} }
+    \stepcounter { ST@inline }
+  }
+
+% Local assignment to #1
+\cs_new_protected:Npn \est_record_formatted:Nn #1#2
+  {
+    \__est_record_str_aux:NNn \tl_set:Nf #1 {latex(#2)}
+  }
+
+% Global assignment to #1
+\cs_new_protected:Npn \est_grecord_formatted:Nn #1#2
+  {
+    \__est_record_str_aux:NNn \tl_gset:Nf #1 {latex(#2)}
+  }
+
+\cs_generate_variant:Nn \est_record_formatted:Nn { c }
+\cs_generate_variant:Nn \est_grecord_formatted:Nn { c }
+
+\cs_new_protected:Npn \est_record_str:Nn #1#2
+  {
+    \__est_record_str_aux:NNn \tl_set:Nf #1 {#2}
+  }
+
+\cs_new_protected:Npn \est_grecord_str:Nn #1#2
+  {
+    \__est_record_str_aux:NNn \tl_gset:Nf #1 {#2}
+  }
+
+\cs_generate_variant:Nn \est_record_str:Nn { c }
+\cs_generate_variant:Nn \est_grecord_str:Nn { c }
+
+% Python floats handed to Sage's latex() function yield something ending with
+% \times 10^{...} if they are very large or very small in magnitude. This
+% function and its derivatives uses Python's string interpolation operator (%)
+% to apply a user-chosen format to the float obtained after evaluating #3 in
+% Python. To be clear, we evaluate something like "%.10f" % (#3,)
+% where the '.10f' part is actually user-chosen via #4. (#3,) is a Python
+% tuple that should containing exactly one element: a float.
+\cs_new_protected:Npn \__est_record_float_aux:NNnn #1#2#3#4
+  {
+    \__est_record_str_aux:NNn #1 #2
+      { "\c_percent_str #4" \space \c_percent_str \space (\space #3\space ,) }
+  }
+
+% #1: macro name
+% #2: Python expression that evaluates to a float (use \c_percent_str if you
+%     need percent signs, etc.)
+% #3: formatting directive for Python's interpolation operator %. This must be
+%     used to tell how the result is to be formatted by Python before it
+%     reaches the LaTeX document. For instance, use '.10f' (without the
+%     single quotes) if you want the number in the LaTeX document to have 10
+%     decimal places.
+\cs_new_protected:Npn \est_record_float:Nnn #1#2#3
+  {
+    \__est_record_float_aux:NNnn \tl_set:Nf #1 {#2} {#3}
+  }
+
+% Ditto, except it performs a global assignment
+\cs_new_protected:Npn \est_grecord_float:Nnn #1#2#3
+  {
+    \__est_record_float_aux:NNnn \tl_gset:Nf #1 {#2} {#3}
+  }
+
+\cs_generate_variant:Nn \est_record_float:Nnn { c }
+\cs_generate_variant:Nn \est_grecord_float:Nnn { c }
+
+% #1: Number (integer denotation) of a recorded Sage expression
+% #2: default used when not in pause mode and the ref is undefined
+% #3: default used when in SageTeX is in pause mode
+\cs_new:Npn \est_get:nnn #1#2#3
+  {
+    \__est_legacy_switch_if:nTF { ST@paused }
+      { \exp_not:n {#3} }
+      {
+        \cs_if_exist:cTF { r@@sageinline #1 }
+          {
+            \exp_args:NNo \exp_args:No
+              \exp_not:n { \getrefnumber { @sageinline #1 } }
+          }
+          { \exp_not:n {#2} }
+      }
+  }
+
+\cs_generate_variant:Nn \est_get:nnn { V, v }
+
+% If no record with number #1 has been loaded from the .aux, define a macro so
+% that SageTeX will tell the user to (re)run Sage.
+\cs_new_protected:Npn \est_refused:n #1
+  {
+    \cs_if_exist:cF { r@@sageinline #1 }
+      {
+        \cs_gset:cpn { ST@rerun } { x }
+        % SageTeX ought to do this, otherwise the warning message is easy to
+        % miss...
+        \use:c { G@refundefinedtrue }
+      }
+  }
+
+\cs_generate_variant:Nn \est_refused:n { V, v }
+
+% #1: macro or l3 token list variable storing the number of a recorded Sage
+%     output
+% #2: Sage expression to record (will be written to the .sagetex.sage file)
+%
+% This uses latex() wrapping around the result. As a consequence, when
+% retrieved with \estGet, the computed value will be made of math mode
+% material. Thus, you'll have to call \estGet in math mode.
+\NewDocumentCommand \estRecordFormatted { m m }
+  {
+    \est_record_formatted:Nn #1 {#2}
+  }
+
+% The 'A' in some of these macros stands for “array” (as in “associative
+% array”). Macros from this array family accept an index argument after the
+% base name of the macro in which things are recorded. This is useful in order
+% to prepare arrays of results computed by Python, for instance in order to
+% draw a plot based on coordinates computed by Sage. The destination macro is
+% the result of expanding \csname <base>@<index>\endcsname, where <base> and
+% <index> stand for #1 and #2, respectively.
+%
+% #1: base for the macro name
+% #2: index for the macro name (some kind of associative array index)
+% #3: Sage expression to record (will be written to the .sagetex.sage file)
+\NewDocumentCommand \estARecordFormatted { m m m }
+  {
+    \est_record_formatted:cn { #1@#2 } {#3}
+  }
+
+% Ditto as \estRecordExp, except it assigns globally to #1
+\NewDocumentCommand \estGRecordFormatted { m m }
+  {
+    \est_grecord_formatted:Nn #1 {#2}
+  }
+
+% Global assignment with an index in the destination macro name (aka, “array
+% version” of \estGRecordFormatted)
+\NewDocumentCommand \estGARecordFormatted { m m m }
+  {
+    \est_grecord_formatted:cn { #1@#2 } {#3}
+  }
+
+% Contrary to \est*RecordFormatted, the \est*RecordStr functions don't
+% use any latex() wrapping around the result.
+%
+% #1: macro or l3 token list variable storing the number of a recorded Sage
+%     output
+% #2: Sage expression to record (will be written to the .sagetex.sage file).
+%     This expression must evaluate (in Python) to a string.
+\NewDocumentCommand \estRecordStr { m m }
+  {
+    \est_record_str:Nn #1 {#2}
+  }
+
+% #1: base for the macro name
+% #2: index for the macro name (some kind of associative array index)
+% #3: Sage expression to record (will be written to the .sagetex.sage file)
+\NewDocumentCommand \estARecordStr { m m m }
+  {
+    \est_record_str:cn { #1@#2 } {#3}
+  }
+
+% Global assignment
+\NewDocumentCommand \estGRecordStr { m m }
+  {
+    \est_grecord_str:Nn #1 {#2}
+  }
+
+% Global assignment, array-style variant
+\NewDocumentCommand \estGARecordStr { m m m }
+  {
+    \est_grecord_str:cn { #1@#2 } {#3}
+  }
+
+% See \__est_record_float_aux:NNnn above for an introduction to the
+% \est*RecordFloat family of functions.
+%
+% #1: macro or l3 token list variable storing the number of a recorded Sage
+%     output
+% #2: Sage expression to record (will be written to the .sagetex.sage file);
+%     it must evaluate to a float (in Python/Sage)
+% #3: Format specifier (e.g., '.10f') used to convert the result to a string
+%     that will be how the LaTeX document sees this result.
+\NewDocumentCommand \estRecordFloat { m m m }
+  {
+    \est_record_float:Nnn #1 {#2} {#3}
+  }
+
+% #1: base for the macro name
+% #2: index for the macro name (some kind of associative array index)
+% #3: Sage expression that must evaluate to a float (see \estRecordFloat)
+% #4: Format specifier (see \estRecordFloat)
+\NewDocumentCommand \estARecordFloat { m m m m }
+  {
+    \est_record_float:cnn { #1@#2 } {#3} { #4}
+  }
+
+% Global assignment
+\NewDocumentCommand \estGRecordFloat { m m m }
+  {
+    \est_grecord_float:Nnn #1 {#2} {#3}
+  }
+
+% Global assignment, array-style variant
+\NewDocumentCommand \estGARecordFloat { m m m m }
+  {
+    \est_grecord_float:cnn { #1@#2 } {#3} { #4}
+  }
+
+% Get a recorded result from the .sagetex.sout file.
+%
+% #1: used when SageTeX is not in pause mode and the ref is undefined
+% #2: macro or l3 token list variable storing the number of a recorded Sage
+%     output (this number is used to look up a reference in the .aux file)
+\NewExpandableDocumentCommand \estGet { O{??} m }
+  {
+    \est_get:Vnn #2 {#1} {-1} % -1: what we yield when SageTeX is paused
+  }
+
+% Get a recorded result from the .sagetex.sout file (array-style variant).
+%
+% #1: used when SageTeX is not in pause mode and the ref is undefined
+% #2: base for the macro name
+% #3: index for the macro name
+\NewExpandableDocumentCommand \estAGet { O{??} m m }
+  {
+    \est_get:vnn { #2@#3 } {#1} {-1}
+  }
+
+% The \est*RefUsed functions must be used *after* the corresponding
+% Python expression has been recorded.
+%
+% #1: macro or l3 token list variable storing the number of a recorded Sage
+%     output
+\NewDocumentCommand \estRefUsed { m }
+  {
+    \est_refused:V #1
+  }
+
+% Array-style variant of \estRefUsed
+\NewDocumentCommand \estARefUsed { m m }
+  {
+    \est_refused:v { #1@#2 }
+  }
+
+\endinput
