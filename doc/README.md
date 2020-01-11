@@ -1,15 +1,20 @@
 # `expsagetex` — Introduction and examples
 
-`expsagetex.tex` is the main document about `expsagetex`, along with (currently)
-this [answer on TeX.SE][answer]. To compile this file yourself, you need Sage.
-`sagetex.sty`, shipped with Sage, must be in your `TEXINPUTS`. When these
-requirements are fulfilled, you can run for instance:
+Along with this [answer on TeX.SE][answer], the main document about
+`expsagetex` is `expsagetex.tex`. A PDF rendering of this file can be found
+[here](https://github.com/frougon/expsagetex/wiki/files/expsagetex.pdf).
+
+In case you want to compile it yourself, you need Sage. `sagetex.sty`, shipped
+with Sage, must be in your `TEXINPUTS`. When these requirements are fulfilled,
+you can run, for instance:
+
 ```
 pdflatex expsagetex.tex
 sage expsagetex.sagetex.sage
 pdflatex expsagetex.tex
 pdflatex expsagetex.tex
 ```
+
 This should work as well if you replace `pdflatex` with `lualatex` or
 `xelatex`.
 

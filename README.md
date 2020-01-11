@@ -30,7 +30,10 @@ conditions given in the LICENSE file.
 ## Instructions and examples
 
 Instructions and examples can be found in the doc directory as well as in the
-[answer on TeX.SE][answer].
+[answer on TeX.SE][answer]. A PDF rendering of
+[doc/expsagetex.tex](https://github.com/frougon/expsagetex/blob/master/doc/expsagetex.tex)
+(the `expsagetex` proto-manual) can be found
+[here](https://github.com/frougon/expsagetex/wiki/files/expsagetex.pdf).
 
 ## License
 
